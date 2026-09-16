@@ -10,6 +10,10 @@ HEIGHT = 720
 MAX_PREY = 9000
 MAX_PRED = 1000
 
+RESTITUTION = 0.85
+
+PREY_SPEED = 150.0
+
 num_active_prey = ti.field(dtype=ti.i32, shape=())
 free_top_prey = ti.field(dtype=ti.i32, shape=())
 
@@ -35,6 +39,8 @@ pred_is_alive = ti.field(dtype=ti.i32, shape=(MAX_PRED))
 pred_free_stack = ti.field(dtype=ti.i32, shape=(MAX_PRED))
 pred_active_indices = ti.field(dtype=ti.i32, shape=(MAX_PRED))
 
+render_prey_pos = ti.Vector.field(2, dtype=ti.f32, shape=MAX_PREY)
+
 @ti.kernel
 def init_simulation():
     num_active_prey[None] = 0
@@ -58,8 +64,25 @@ def _spawn_prey_kernel(count: ti.i32):
         prey_health[slot] = 1000
         prey_max_health[slot] = 1000
         prey_pos[slot] = ti.Vector([WIDTH * ti.random(), HEIGHT * ti.random()])
-        prey_vel[slot] = ti.Vector([(ti.random() - 0.5) * 2.0, (ti.random() - 0.5) * 2.0])
+        prey_vel[slot] = ti.Vector([(ti.random() - 0.5) * 2.0 * PREY_SPEED, (ti.random() - 0.5) * 2.0 * PREY_SPEED])
         prey_is_alive[slot] = True
+
+@ti.kernel
+def update_prey_motion(dt: ti.f32):
+    for i in range(num_active_prey[None]):
+        slot = prey_active_indices[i]
+        
+        next_x = prey_pos[slot].x + prey_vel[slot].x * dt
+        if next_x < 0.0 or next_x > WIDTH:
+            prey_vel[slot].x *= -RESTITUTION
+        
+        next_y = prey_pos[slot].y + prey_vel[slot].y * dt
+        if next_y < 0.0 or next_y > HEIGHT:
+            prey_vel[slot].y *= -RESTITUTION
+        
+        prey_pos[slot] += prey_vel[slot] * dt
+        prey_pos[slot].x = ti.math.clamp(prey_pos[slot].x, 0.0, WIDTH)
+        prey_pos[slot].y = ti.math.clamp(prey_pos[slot].y, 0.0, HEIGHT)
 
 
 def spawn_prey(count):
@@ -68,7 +91,27 @@ def spawn_prey(count):
     else:
         raise RuntimeError("free slot not enough for spawning")
 
+@ti.kernel
+def normalize_pos():
+    for i in range(num_active_prey[None]):
+        slot = prey_active_indices[i]
+        x_norm = prey_pos[slot].x / WIDTH
+        y_norm = prey_pos[slot].y / HEIGHT
+        render_prey_pos[i] = ti.Vector([x_norm, y_norm])
 
-init_simulation()
-spawn_prey(50)
-print(num_active_prey[None])
+def main():
+    init_simulation()
+    spawn_prey(500)
+    
+    gui = ti.GUI("Life Simulation", res=(WIDTH, HEIGHT))
+    dt = 1.0/60.0
+
+    while gui.running:
+        update_prey_motion(dt)
+        normalize_pos()
+        active_count = num_active_prey[None]
+        gui.circles(render_prey_pos.to_numpy()[:active_count], radius=3, color=0x00FF00)
+        gui.show()
+
+
+main()
