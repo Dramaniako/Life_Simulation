@@ -101,16 +101,18 @@ def normalize_pos():
 
 def main():
     init_simulation()
-    spawn_prey(500)
+    spawn_prey(5000)
     
-    gui = ti.GUI("Life Simulation", res=(WIDTH, HEIGHT))
+    gui = ti.ui.Window("Life Simulation", res=(WIDTH, HEIGHT))
+    
     dt = 1.0/60.0
 
     while gui.running:
         update_prey_motion(dt)
         normalize_pos()
         active_count = num_active_prey[None]
-        gui.circles(render_prey_pos.to_numpy()[:active_count], radius=3, color=0x00FF00)
+        canvas = gui.get_canvas()
+        canvas.circles(render_prey_pos, radius=0.005, color=(0.0, 1.0, 0.0))
         gui.show()
 
 
