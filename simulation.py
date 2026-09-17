@@ -10,7 +10,7 @@ HEIGHT = 720
 MAX_PREY = 9000
 MAX_PRED = 1000
 
-RESTITUTION = 0.85
+RESTITUTION = 1.0
 
 PREY_SPEED = 150.0
 
@@ -69,23 +69,20 @@ def _spawn_prey_kernel(count: ti.i32):
 
 @ti.kernel
 def update_prey_motion(dt: ti.f32):
-    for i in range(num_active_prey[None]):
+    for i in range(1, num_active_prey[None]):
         slot = prey_active_indices[i]
-        neighbor1 = prey_active_indices[i - 1] if i > 0 else 1
-        neighbor2 = prey_active_indices[i + 1] if i < num_active_prey[None] - 1 else 1
+        alpha = prey_active_indices[0]
 
-        neighbor = min(prey_pos[neighbor1], prey_pos[neighbor2])
-
-        next_x = prey_pos[slot].x + prey_vel[slot].x * dt
-        if next_x < 0.0 or next_x > WIDTH:
+        next_x = prey_pos[slot].x + prey_vel[slot].x + prey_pos[alpha].x * dt * 100
+        if next_x < 0.0 or next_x > WIDTH or prey_vel[slot].x == WIDTH:
             prey_vel[slot].x *= -RESTITUTION
         
-        next_y = prey_pos[slot].y + prey_vel[slot].y * dt
-        if next_y < 0.0 or next_y > HEIGHT:
+        next_y = prey_pos[slot].y + prey_vel[slot].y + prey_pos[alpha].y * dt * 100
+        if next_y < 0.0 or next_y > HEIGHT or prey_vel[slot].y == HEIGHT:
             prey_vel[slot].y *= -RESTITUTION
         
-        prey_vel[slot] = prey_pos[neighbor2] * dt
-        prey_pos[slot] += prey_vel[slot] * dt
+
+        prey_pos[slot] += prey_vel[slot] * dt + prey_pos[alpha] * dt
         prey_pos[slot].x = ti.math.clamp(prey_pos[slot].x, 0.0, WIDTH)
         prey_pos[slot].y = ti.math.clamp(prey_pos[slot].y, 0.0, HEIGHT)
 
