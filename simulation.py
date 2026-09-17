@@ -64,14 +64,18 @@ def _spawn_prey_kernel(count: ti.i32):
         prey_health[slot] = 1000
         prey_max_health[slot] = 1000
         prey_pos[slot] = ti.Vector([WIDTH * ti.random(), HEIGHT * ti.random()])
-        prey_vel[slot] = ti.Vector([(ti.random() - 0.5) * 2.0 * PREY_SPEED, (ti.random() - 0.5) * 2.0 * PREY_SPEED])
+        prey_vel[slot] = ti.Vector([(ti.random() - 0.5) * 2.0, (ti.random() - 0.5) * 2.0])
         prey_is_alive[slot] = True
 
 @ti.kernel
 def update_prey_motion(dt: ti.f32):
     for i in range(num_active_prey[None]):
         slot = prey_active_indices[i]
-        
+        neighbor1 = prey_active_indices[i - 1] if i > 0 else 1
+        neighbor2 = prey_active_indices[i + 1] if i < num_active_prey[None] - 1 else 1
+
+        neighbor = min(prey_pos[neighbor1], prey_pos[neighbor2])
+
         next_x = prey_pos[slot].x + prey_vel[slot].x * dt
         if next_x < 0.0 or next_x > WIDTH:
             prey_vel[slot].x *= -RESTITUTION
@@ -80,6 +84,7 @@ def update_prey_motion(dt: ti.f32):
         if next_y < 0.0 or next_y > HEIGHT:
             prey_vel[slot].y *= -RESTITUTION
         
+        prey_vel[slot] = prey_pos[neighbor2] * dt
         prey_pos[slot] += prey_vel[slot] * dt
         prey_pos[slot].x = ti.math.clamp(prey_pos[slot].x, 0.0, WIDTH)
         prey_pos[slot].y = ti.math.clamp(prey_pos[slot].y, 0.0, HEIGHT)
