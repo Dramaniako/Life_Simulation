@@ -12,7 +12,7 @@ MAX_PRED = 1000
 
 RESTITUTION = 1.0
 
-PREY_SPEED = 5.0
+PREY_SPEED = 2.5
 PRED_SPEED = 5.0
 
 CELL_SIZE = 25
@@ -98,11 +98,6 @@ def update_prey_motion(dt: ti.f32):
     for i in range(0, num_active_prey[None]):
         slot = prey_active_indices[i]
 
-        if ti.random() < 0.05:
-            perp = ti.Vector([-prey_vel[slot].y, prey_vel[slot].x]).norm()
-            side = 1.0 if ti.random() < 0.5 else -1.0
-            prey_vel[slot] += perp * side * PREY_SPEED * 0.8
-
         cx = ti.cast(prey_pos[slot].x / CELL_SIZE, ti.i32)
         cy = ti.cast(prey_pos[slot].y / CELL_SIZE, ti.i32)
 
@@ -135,7 +130,7 @@ def update_prey_motion(dt: ti.f32):
             center = sum_pos / neighbor_count
             steer_cohesion = center - prey_pos[slot]
             if neighbor_count > MAX_FLOCK_MEMBERS:
-                steer_cohesion *= -0.1
+                steer_cohesion = 0
             total_force = (4.0 * steer_separation) + (0.8 * steer_alignment) + (0.5 * steer_cohesion)
 
         prey_vel[slot] += total_force
@@ -153,6 +148,12 @@ def update_prey_motion(dt: ti.f32):
         prey_vel[slot] = (prey_vel[slot] / prey_vel[slot].norm()) * PREY_SPEED
 
         prey_pos[slot] += prey_vel[slot]
+
+        if ti.random() < 0.05:
+            perp = ti.Vector([-prey_vel[slot].y, -prey_vel[slot].x]).norm()
+            side = 1.0 if ti.random() < 0.5 else -1.0
+            prey_vel[slot] *= perp * side * PREY_SPEED
+
         prey_pos[slot].x = ti.math.clamp(prey_pos[slot].x, 0.0, WIDTH)
         prey_pos[slot].y = ti.math.clamp(prey_pos[slot].y, 0.0, HEIGHT)
 
@@ -228,7 +229,7 @@ def bin_kernel():
 
 def main():
     init_simulation()
-    spawn_prey(1000)
+    spawn_prey(2000)
     spawn_pred(10)
     
     gui = ti.ui.Window("Life Simulation", res=(WIDTH, HEIGHT))
