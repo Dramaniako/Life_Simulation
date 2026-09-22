@@ -229,7 +229,7 @@ def bin_kernel():
 
 def main():
     init_simulation()
-    spawn_prey(2000)
+    spawn_prey(MAX_PREY)
     spawn_pred(10)
     
     gui = ti.ui.Window("Life Simulation", res=(WIDTH, HEIGHT))
@@ -245,7 +245,7 @@ def main():
         normalize_pos_pred()
         active_count = num_active_prey[None]
         canvas = gui.get_canvas()
-        canvas.circles(render_prey_pos, radius=0.005, color=(0.0, 1.0, 0.0))
+        canvas.circles(render_prey_pos, radius=0.001, color=(0.0, 1.0, 0.0))
         canvas.circles(render_pred_pos, radius=0.005, color=(1.0, 0.0, 0.0))
 
         gui.show()
