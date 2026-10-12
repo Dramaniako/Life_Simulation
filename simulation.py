@@ -26,7 +26,7 @@ MAX_FLOCK_MEMBERS = 10
 
 PRED_VISION_RADIUS = 200.0
 EAT_RADIUS = 8.0
-PREY_FLEE_RADIUS = 60.0
+PREY_FLEE_RADIUS = 120.0
 
 SEARCH_CELLS = int(PRED_VISION_RADIUS // CELL_SIZE) + 1
 
@@ -122,7 +122,7 @@ def update_prey_motion(dt: ti.f32):
         total_force = ti.Vector([0.0, 0.0])
 
         for dx in range(-1, 2):
-            for dy in range(-1,2):
+            for dy in range(-1, 2):
                 nx = cx + dx
                 ny = cy + dy
                 if nx >= 0 and nx < GRID_W and ny >= 0 and ny < GRID_H:
@@ -144,33 +144,46 @@ def update_prey_motion(dt: ti.f32):
             center = sum_pos / neighbor_count
             steer_cohesion = center - prey_pos[slot]
             if neighbor_count > MAX_FLOCK_MEMBERS:
-                steer_cohesion = 0
+                steer_cohesion = ti.Vector([0.0, 0.0])
             total_force = (4.0 * steer_separation) + (0.8 * steer_alignment) + (0.5 * steer_cohesion)
+
+        flee_force = ti.Vector([0.0, 0.0])
+        is_panicking = 0
+
+        for p_idx in range(num_active_pred[None]):
+            p_slot = pred_active_indices[p_idx]
+            diff = prey_pos[slot] - pred_pos[p_slot]
+            dist = diff.norm()
+            if dist < PREY_FLEE_RADIUS and dist > 0.001:
+                flee_force += (diff / dist) * (1.0 - dist / PREY_FLEE_RADIUS)
+                is_panicking = 1
+
+        total_force += flee_force * 10.0
+
+        margin = 60.0
+        turn_strength = 2.0
+        if prey_pos[slot].x < margin:
+            total_force.x += turn_strength * (1.0 - prey_pos[slot].x / margin)
+        elif prey_pos[slot].x > WIDTH - margin:
+            total_force.x -= turn_strength * (1.0 - (WIDTH - prey_pos[slot].x) / margin)
+        if prey_pos[slot].y < margin:
+            total_force.y += turn_strength * (1.0 - prey_pos[slot].y / margin)
+        elif prey_pos[slot].y > HEIGHT - margin:
+            total_force.y -= turn_strength * (1.0 - (HEIGHT - prey_pos[slot].y) / margin)
 
         prey_vel[slot] += total_force
 
-        next_x = prey_pos[slot].x + prey_vel[slot].x + (prey_vel[slot].x * dt)
-        if next_x < 0.0 or next_x > WIDTH:
-            prey_vel[slot].x *= -RESTITUTION
-        
-        next_y = prey_pos[slot].y + prey_vel[slot].y + (prey_vel[slot].y * dt)
-        if next_y < 0.0 or next_y > HEIGHT:
-            prey_vel[slot].y *= -RESTITUTION
-        
-        prey_vel[slot] += prey_vel[slot] * dt
+        target_speed = PREY_SPEED * 1.4 if is_panicking else PREY_SPEED
 
-        prey_vel[slot] = (prey_vel[slot] / prey_vel[slot].norm()) * PREY_SPEED
+        vel_norm = prey_vel[slot].norm()
+        if vel_norm > 0.001:
+            prey_vel[slot] = (prey_vel[slot] / vel_norm) * target_speed
 
         prey_pos[slot] += prey_vel[slot]
 
-        if ti.random() < 0.05:
-            perp = ti.Vector([-prey_vel[slot].y, -prey_vel[slot].x]).norm()
-            side = 1.0 if ti.random() < 0.5 else -1.0
-            prey_vel[slot] *= perp * side * PREY_SPEED
-
-
         prey_pos[slot].x = ti.math.clamp(prey_pos[slot].x, 0.0, WIDTH)
         prey_pos[slot].y = ti.math.clamp(prey_pos[slot].y, 0.0, HEIGHT)
+
 
 @ti.kernel
 def update_pred_motion(dt: ti.f32):
@@ -309,7 +322,7 @@ def cleanup_dead_prey():
                                 
 def main():
     init_simulation()
-    spawn_prey(MAX_PREY)
+    spawn_prey(5000)
     spawn_pred(100)
     
     gui = ti.ui.Window("Life Simulation", res=(WIDTH, HEIGHT))
@@ -326,8 +339,26 @@ def main():
         normalize_pos_pred()
         active_count = num_active_prey[None]
         canvas = gui.get_canvas()
-        canvas.circles(render_prey_pos, radius=0.001, color=(0.0, 1.0, 0.0))
+        canvas.circles(render_prey_pos, radius=0.002, color=(0.0, 1.0, 0.0))
         canvas.circles(render_pred_pos, radius=0.005, color=(1.0, 0.0, 0.0))
+
+        window_gui = gui.get_gui()
+        with window_gui.sub_window("Controls", x=0.02, y=0.02, width=0.18, height=0.14):
+            window_gui.text(f"Prey: {num_active_prey[None]} / {MAX_PREY}")
+            window_gui.text(f"Free: {free_top_prey[None]}")
+            
+            if window_gui.button("Spawn 1000 Prey"):
+                to_spawn = min(1000, free_top_prey[None])
+                if to_spawn > 0:
+                    spawn_prey(to_spawn)
+            
+            window_gui.text(f"Pred: {num_active_pred[None]} / {MAX_PRED}")
+            window_gui.text(f"Free: {free_top_pred[None]}")
+
+            if window_gui.button("Spawn 10 Pred"):
+                to_spawn = min(10, free_top_pred[None])
+                if to_spawn > 0:
+                    spawn_pred(to_spawn)
 
         gui.show()
 
