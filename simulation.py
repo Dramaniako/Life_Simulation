@@ -190,7 +190,7 @@ def update_prey_motion(dt: ti.f32):
 
         prey_pos[slot].x = ti.math.clamp(prey_pos[slot].x, 0.0, WIDTH)
         prey_pos[slot].y = ti.math.clamp(prey_pos[slot].y, 0.0, HEIGHT)
-        if is_panicking == 0 and neighbor_count < 6:
+        if is_panicking == 0 and neighbor_count < 10:
             prey_energy[slot] += 1
 
 
