@@ -1,9 +1,9 @@
 from taichi.math import clamp
-from taichi.types import compound_types
-from taichi.types import compound_types
 import taichi as ti
 
 ti.init(arch=ti.cuda)
+
+vec2 = ti.types.vector(2, ti.f32)
 
 WIDTH = 2000
 HEIGHT = 1000
@@ -24,17 +24,20 @@ MAX_PER_CELL = 10
 
 MAX_FLOCK_MEMBERS = 10
 
+PREY_REPRODUCTION_ENERGY = 1200
+PRED_REPRODUCTION_ENERGY = 3
+
 PRED_VISION_RADIUS = 200.0
 EAT_RADIUS = 8.0
 PREY_FLEE_RADIUS = 120.0
 
 SEARCH_CELLS = int(PRED_VISION_RADIUS // CELL_SIZE) + 1
 
-PRED_MAX_HUNGER = 1000
-PRED_HUNGER_RATE = 10
+PRED_MAX_HUNGER = 2400
+PRED_HUNGER_RATE = 1
 PRED_ACCEL = 2.0
-HUNGER_HUNT_THRESHOLD = 500
-PRED_EAT_ENERGY_GAIN = 1000
+HUNGER_HUNT_THRESHOLD = 400
+PRED_EAT_ENERGY_GAIN = 2400
 
 num_active_prey = ti.field(dtype=ti.i32, shape=())
 free_top_prey = ti.field(dtype=ti.i32, shape=())
@@ -54,6 +57,7 @@ prey_panic = ti.field(dtype=ti.f32, shape=(MAX_PREY))
 prey_is_alive = ti.field(dtype=ti.i32, shape=(MAX_PREY))
 prey_free_stack = ti.field(dtype=ti.i32, shape=(MAX_PREY))
 prey_active_indices = ti.field(dtype=ti.i32, shape=(MAX_PREY))
+prey_energy = ti.field(dtype=ti.i32, shape=(MAX_PREY))
 
 pred_health = ti.field(dtype=ti.f32, shape=(MAX_PRED))
 pred_max_health = ti.field(dtype=ti.f32, shape=(MAX_PRED))
@@ -62,6 +66,7 @@ pred_target_id = ti.field(dtype=ti.i32, shape=(MAX_PRED))
 pred_is_alive = ti.field(dtype=ti.i32, shape=(MAX_PRED))
 pred_free_stack = ti.field(dtype=ti.i32, shape=(MAX_PRED))
 pred_active_indices = ti.field(dtype=ti.i32, shape=(MAX_PRED))
+pred_energy = ti.field(dtype=ti.i32, shape=(MAX_PRED))
 
 render_prey_pos = ti.Vector.field(2, dtype=ti.f32, shape=MAX_PREY)
 render_pred_pos = ti.Vector.field(2, dtype=ti.f32, shape=MAX_PRED)
@@ -93,6 +98,7 @@ def _spawn_prey_kernel(count: ti.i32):
         prey_max_health[slot] = 1000
         prey_pos[slot] = ti.Vector([WIDTH * ti.random(), HEIGHT * ti.random()])
         prey_vel[slot] = ti.Vector([(ti.random() - 0.5) * 2.0 * PREY_SPEED, (ti.random() - 0.5) * 2.0 * PREY_SPEED])
+        prey_energy[slot] = 0
         prey_is_alive[slot] = True
 
 @ti.kernel
@@ -105,7 +111,8 @@ def _spawn_pred_kernel(count: ti.i32):
         pred_pos[slot] = ti.Vector([WIDTH * ti.random(), HEIGHT * ti.random()])
         pred_vel[slot] = ti.Vector([(ti.random() - 0.5) * 2.0 * PRED_SPEED, (ti.random() - 0.5) * 2.0 * PRED_SPEED])
         pred_is_alive[slot] = True
-        pred_hunger[slot] = ti.cast(ti.random() * HUNGER_HUNT_THRESHOLD, ti.i32)
+        pred_energy[slot] = 0
+        pred_hunger[slot] = 0
 
 @ti.kernel
 def update_prey_motion(dt: ti.f32):
@@ -183,6 +190,8 @@ def update_prey_motion(dt: ti.f32):
 
         prey_pos[slot].x = ti.math.clamp(prey_pos[slot].x, 0.0, WIDTH)
         prey_pos[slot].y = ti.math.clamp(prey_pos[slot].y, 0.0, HEIGHT)
+        if is_panicking == 0 and neighbor_count < 6:
+            prey_energy[slot] += 1
 
 
 @ti.kernel
@@ -222,6 +231,7 @@ def update_pred_motion(dt: ti.f32):
                     pred_hunger[slot] = max(0, pred_hunger[slot] - PRED_EAT_ENERGY_GAIN)
                     pred_health[slot] = pred_max_health[slot]
                     pred_target_id[slot] = -1
+                    pred_energy[slot] += 1
             else:
                 dir = diff / closest_dist
                 pred_vel[slot] += dir * PRED_ACCEL
@@ -253,6 +263,9 @@ def update_pred_motion(dt: ti.f32):
         pred_pos[slot].x = ti.math.clamp(pred_pos[slot].x, 0.0, WIDTH)
         pred_pos[slot].y = ti.math.clamp(pred_pos[slot].y, 0.0, HEIGHT)
 
+        if pred_hunger[slot] >= PRED_MAX_HUNGER:
+            pred_is_alive[slot] = 0
+
 def spawn_prey(count):
     if free_top_prey[None] >= count:
         _spawn_prey_kernel(count)
@@ -278,11 +291,14 @@ def normalize_pos_prey():
 
 @ti.kernel
 def normalize_pos_pred():
-    for i in range(num_active_pred[None]):
-        slot = pred_active_indices[i]
-        x_norm = pred_pos[slot].x / WIDTH
-        y_norm = pred_pos[slot].y / HEIGHT
-        render_pred_pos[i] = ti.Vector([x_norm, y_norm])
+    for i in range(MAX_PRED):
+        if i < num_active_pred[None]:
+            slot = pred_active_indices[i]
+            x_norm = pred_pos[slot].x / WIDTH
+            y_norm = pred_pos[slot].y / HEIGHT
+            render_pred_pos[i] = ti.Vector([x_norm, y_norm])
+        else:
+            render_pred_pos[i] = ti.Vector([-10.0, -10.0])
 
 @ti.kernel
 def clear_grid():
@@ -314,16 +330,98 @@ def cleanup_dead_prey():
                 surviving += 1
             else:
                 stack_top = free_top_prey[None]
-                prey_free_stack[stack_top] = slot
-                free_top_prey[None] += 1
+                if stack_top >= 0 and stack_top < MAX_PREY:
+                    prey_free_stack[stack_top] = slot
+                    free_top_prey[None] += 1
         num_active_prey[None] = surviving
-    
 
+@ti.kernel
+def cleanup_dead_pred():
+    for _ in range(1):
+        surviving = 0
+        for i in range(num_active_pred[None]):
+            slot = pred_active_indices[i]
+            if pred_is_alive[slot] == 1:
+                pred_active_indices[surviving] = slot
+                surviving += 1
+            else:
+                stack_top = free_top_pred[None]
+                if stack_top >= 0 and stack_top < MAX_PRED:
+                    pred_free_stack[stack_top] = slot
+                    free_top_pred[None] += 1
+        num_active_pred[None] = surviving
+
+@ti.func
+def spawn_one_prey(parent_pos: vec2) -> ti.i32:
+    success = 0
+    if free_top_prey[None] > 0 and num_active_prey[None] < MAX_PREY:
+        old_top = ti.atomic_sub(free_top_prey[None], 1)
+        if old_top > 0:
+            active_idx = ti.atomic_add(num_active_prey[None], 1)
+            if active_idx < MAX_PREY:
+                slot = prey_free_stack[old_top - 1]
+                prey_active_indices[active_idx] = slot
+                prey_health[slot] = 1000.0
+                prey_max_health[slot] = 1000.0
+                offset = ti.Vector([(ti.random() - 0.5) * 20.0, (ti.random() - 0.5) * 20.0])
+                prey_pos[slot] = ti.math.clamp(parent_pos + offset, ti.Vector([0.0, 0.0]), ti.Vector([WIDTH, HEIGHT]))
+                prey_vel[slot] = ti.Vector([(ti.random() - 0.5) * 2.0 * PREY_SPEED, (ti.random() - 0.5) * 2.0 * PREY_SPEED])
+                prey_energy[slot] = 0
+                prey_is_alive[slot] = 1
+                success = 1
+            else:
+                ti.atomic_sub(num_active_prey[None], 1)
+                ti.atomic_add(free_top_prey[None], 1)
+        else:
+            ti.atomic_add(free_top_prey[None], 1)
+    return success
+
+@ti.func
+def spawn_one_pred(parent_pos: vec2) -> ti.i32:
+    success = 0
+    if free_top_pred[None] > 0 and num_active_pred[None] < MAX_PRED:
+        old_top = ti.atomic_sub(free_top_pred[None], 1)
+        if old_top > 0:
+            active_idx = ti.atomic_add(num_active_pred[None], 1)
+            if active_idx < MAX_PRED:
+                slot = pred_free_stack[old_top - 1]
+                pred_active_indices[active_idx] = slot
+                pred_health[slot] = 1000.0
+                pred_max_health[slot] = 1000.0
+                offset = ti.Vector([(ti.random() - 0.5) * 20.0, (ti.random() - 0.5) * 20.0])
+                pred_pos[slot] = ti.math.clamp(parent_pos + offset, ti.Vector([0.0, 0.0]), ti.Vector([WIDTH, HEIGHT]))
+                pred_vel[slot] = ti.Vector([(ti.random() - 0.5) * 2.0 * PRED_SPEED, (ti.random() - 0.5) * 2.0 * PRED_SPEED])
+                pred_energy[slot] = 0
+                pred_hunger[slot] = 0
+                pred_is_alive[slot] = 1
+                success = 1
+            else:
+                ti.atomic_sub(num_active_pred[None], 1)
+                ti.atomic_add(free_top_pred[None], 1)
+        else:
+            ti.atomic_add(free_top_pred[None], 1)
+    return success
+
+@ti.kernel
+def prey_mating():
+    for i in range(num_active_prey[None]):
+        slot = prey_active_indices[i]
+        if prey_energy[slot] >= PREY_REPRODUCTION_ENERGY:
+            if spawn_one_prey(prey_pos[slot]) == 1:
+                prey_energy[slot] = 0
+
+@ti.kernel
+def pred_mating():
+    for i in range(num_active_pred[None]):
+        slot = pred_active_indices[i]
+        if pred_energy[slot] >= PRED_REPRODUCTION_ENERGY:
+            if spawn_one_pred(pred_pos[slot]) == 1:
+                pred_energy[slot] = 0
                                 
 def main():
     init_simulation()
-    spawn_prey(5000)
-    spawn_pred(100)
+    spawn_prey(300)
+    spawn_pred(15)
     
     gui = ti.ui.Window("Life Simulation", res=(WIDTH, HEIGHT))
     
@@ -334,7 +432,10 @@ def main():
         bin_kernel()
         update_pred_motion(dt)
         cleanup_dead_prey()
+        cleanup_dead_pred()
         update_prey_motion(dt)
+        prey_mating()
+        pred_mating()
         normalize_pos_prey()
         normalize_pos_pred()
         active_count = num_active_prey[None]
@@ -343,7 +444,7 @@ def main():
         canvas.circles(render_pred_pos, radius=0.005, color=(1.0, 0.0, 0.0))
 
         window_gui = gui.get_gui()
-        with window_gui.sub_window("Controls", x=0.02, y=0.02, width=0.18, height=0.14):
+        with window_gui.sub_window("Controls", x=0.02, y=0.02, width=0.18, height=0.22):
             window_gui.text(f"Prey: {num_active_prey[None]} / {MAX_PREY}")
             window_gui.text(f"Free: {free_top_prey[None]}")
             
